@@ -53,11 +53,11 @@ DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
 # ======================= JOB SOURCES =======================
 JOB_SOURCES = [
-    {'name': 'AllJobs',    'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'},
-    {'name': 'Drushim',    'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'},
-    {'name': 'Indeed',     'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'},
-    {'name': 'Glassdoor',  'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
-    {'name': 'LinkedIn',   'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'}
+    {'name': 'AllJobs', 'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'},
+    {'name': 'Drushim', 'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'},
+    {'name': 'Indeed', 'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'},
+    {'name': 'Glassdoor', 'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
+    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'}
 ]
 
 # ======================= SCRAPE & LOG =======================
@@ -100,7 +100,7 @@ def fetch_jobs() -> List[Dict]:
     logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
     return jobs
 
-# ======================= FILTER RELEVANCE =======================
+# ======================= FILTER RELEVANT =======================
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     try:
         relevant = []
@@ -111,16 +111,17 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
                 "Salary: around 25000 ILS\n"
                 "Is this role relevant? (yes/no)"
             )
-            resp = openai.ChatCompletion.create(
+            resp = openai.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}]
             )
             answer = resp.choices[0].message.content.strip().lower()
             if 'yes' in answer:
                 relevant.append(job)
+        logger.info(f"Filtered down to {len(relevant)} relevant jobs")
         return relevant
-    except openai.error.RateLimitError as e:
-        logger.warning(f"Rate limit reached: {e}, marking all {len(jobs)} jobs as relevant")
+    except Exception as e:
+        logger.warning(f"OpenAI error ({e}), treating all {len(jobs)} jobs as relevant")
         return jobs
 
 # ======================= NOTIFICATIONS =======================
@@ -130,6 +131,7 @@ def send_telegram(message: str):
     except TelegramError as e:
         logger.error(f"Telegram error: {e}")
 
+# ======================= EMAIL =======================
 def send_email(subject: str, body: str, attachments: List[str] = None):
     msg = MIMEMultipart()
     msg['From'] = os.getenv('EMAIL_FROM')
@@ -149,30 +151,31 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
         s.send_message(msg)
         logger.info("Email sent")
 
-# ======================= DOCUMENT GENERATION =======================
+# ======================= DOCUMENT GENERATION & DRIVE UPLOAD =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
-    resp = openai.ChatCompletion.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
     parts = resp.choices[0].message.content.strip().split('---')
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
-    resume, cover = parts[0].strip(), parts[1].strip() if len(parts)>1 else ''
-    res_file = f"resume_{ts}.txt"
-    cov_file = f"cover_{ts}.txt"
-    with open(res_file,'w') as f: f.write(resume)
-    with open(cov_file,'w') as f: f.write(cover)
+    resume_file = f"resume_{ts}.txt"
+    cover_file = f"cover_{ts}.txt"
+    with open(resume_file,'w') as f: f.write(parts[0].strip())
+    if len(parts)>1:
+        with open(cover_file,'w') as f: f.write(parts[1].strip())
     # upload to Drive
-    for file_path in (res_file, cov_file):
-        media = MediaFileUpload(file_path)
-        drive_service.files().create(
-            body={ 'name': file_path, 'parents': [DRIVE_FOLDER_ID] },
-            media_body=media,
-            fields='id'
-        ).execute()
-        logger.info(f"Uploaded {file_path} to Drive folder {DRIVE_FOLDER_ID}")
-    return {'resume': res_file, 'cover': cov_file}
+    for file_path in [resume_file, cover_file]:
+        if file_path:
+            media = MediaFileUpload(file_path)
+            drive_service.files().create(
+                body={'name': file_path, 'parents': [DRIVE_FOLDER_ID]},
+                media_body=media,
+                fields='id'
+            ).execute()
+            logger.info(f"Uploaded {file_path} to Drive")
+    return {'resume': resume_file, 'cover': cover_file}
 
 # ======================= APPLY & LOG =======================
 def apply_to_job(job: Dict, docs: Dict[str, str]):
@@ -187,7 +190,7 @@ def apply_to_job(job: Dict, docs: Dict[str, str]):
     logger.info(f"Logged application for {job['title']}")
     send_telegram(f"✅ Completed application for {job['title']}")
 
-# ======================= MAIN WORKFLOW =======================
+# ======================= MAIN =======================
 def job_pipeline():
     send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
