@@ -2,7 +2,7 @@ name: Job Assistant
 
 on:
   schedule:
-    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
+    # Runs at 05:00 & 15:00 UTC (08:00 & 18:00 Israel Time)
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -24,13 +24,14 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-   - name: Reconstruct service account JSON
-     shell: bash
-     run: |
-       cat <<'EOF' > credentials.json
+      - name: Reconstruct service account JSON
+        shell: bash
+        run: |
+          cat <<'EOF' > credentials.json
+${{ secrets.SERVICE_ACCOUNT_JSON }}
+EOF
 
-
-      - name: Export secrets
+      - name: Export secrets to env
         run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
