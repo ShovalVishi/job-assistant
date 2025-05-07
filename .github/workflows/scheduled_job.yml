@@ -2,7 +2,7 @@ name: Job Assistant
 
 on:
   schedule:
-    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
+    # 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -34,16 +34,6 @@ jobs:
           echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
           echo "SERVICE_ACCOUNT_JSON_B64=${{ secrets.SERVICE_ACCOUNT_JSON_B64 }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
-
-      - name: Debug env
-        run: |
-          echo "Checking required variables…"
-          echo "OPENAI_API_KEY is '${OPENAI_API_KEY:?missing}'"
-          echo "TELEGRAM_TOKEN is '${TELEGRAM_TOKEN:?missing}'"
-          echo "TELEGRAM_CHAT_ID is '${TELEGRAM_CHAT_ID:?missing}'"
-          echo "SERVICE_ACCOUNT_JSON_B64 length is ${#SERVICE_ACCOUNT_JSON_B64}"
-          echo "GOOGLE_SHEETS_ID is '${GOOGLE_SHEETS_ID:?missing}'"
-          echo "EMAIL_FROM is '${EMAIL_FROM:?missing}'"
 
       - name: Run job assistant
         run: python job_assistant.py
