@@ -66,12 +66,11 @@ JOB_SOURCES = [
     },
     {
         'name': 'LinkedIn',
-        # Use LinkedIn guest API for public listings
         'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'
     }
 ]
 
-# ======================= FETCH & FILTER =======================
+# ======================= SCRAPE & LOGGING =======================
 def fetch_jobs() -> List[Dict]:
     jobs: List[Dict] = []
     for src in JOB_SOURCES:
@@ -102,16 +101,16 @@ def fetch_jobs() -> List[Dict]:
                 if a:
                     jobs.append({'source': src['name'], 'title': a.get_text(strip=True), 'link': a['href']})
         elif src['name'] == 'LinkedIn':
-            # Parse guest API HTML
             for tag in soup.select('a.base-card__full-link'):
                 title = tag.get_text(strip=True)
                 link = tag['href']
                 jobs.append({'source': src['name'], 'title': title, 'link': link})
         count = len(jobs) - before
         logger.info(f"{src['name']}: found {count} jobs")
-    logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
+    logger.info(f"Fetched total {len(jobs)} jobs")
     return jobs
 
+# ======================= FILTER RELEVANCE =======================
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     relevant: List[Dict] = []
     for job in jobs:
@@ -121,7 +120,7 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
             "Salary: around 25000 ILS\n"
             "Is this role relevant? (yes/no)"
         )
-        resp = openai.ChatCompletion.create(
+        resp = openai.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}]
         )
@@ -151,26 +150,31 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
         msg.attach(part)
-    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), int(os.getenv('GMAIL_SMTP_PORT'))) as server:
-        server.starttls()
-        server.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
-        server.send_message(msg)
+    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), int(os.getenv('GMAIL_SMTP_PORT'))) as s:
+        s.starttls()
+        s.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
+        s.send_message(msg)
         logger.info("Email sent successfully")
 
+# ======================= DOCUMENT GENERATION =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
-    resp = openai.ChatCompletion.create(
+    resp = openai.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content.strip().split('---')
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
-    with open(f"resume_{ts}.txt", 'w') as f:
+    resume_path = f"resume_{ts}.txt"
+    cover_path = f"cover_{ts}.txt"
+    with open(resume_path, 'w') as f:
         f.write(content[0].strip())
-    with open(f"cover_{ts}.txt", 'w') as f:
-        f.write(content[1].strip() if len(content) > 1 else '')
-    return {'resume': f"resume_{ts}.txt", 'cover': f"cover_{ts}.txt"}
+    if len(content) > 1:
+        with open(cover_path, 'w') as f:
+            f.write(content[1].strip())
+    return {'resume': resume_path, 'cover': cover_path}
 
+# ======================= APPLY & LOG =======================
 def apply_to_job(job: Dict, docs: Dict[str, str]):
     send_email(f"Application for {job['title']}", "Please find attached.", [docs['resume'], docs['cover']])
     now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
@@ -183,6 +187,7 @@ def apply_to_job(job: Dict, docs: Dict[str, str]):
     logger.info(f"Logged application for {job['title']}")
     send_telegram(f"✅ Completed application for {job['title']}")
 
+# ======================= MAIN WORKFLOW =======================
 def job_pipeline():
     send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
