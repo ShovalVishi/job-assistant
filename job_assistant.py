@@ -23,18 +23,20 @@ from email.mime.text import MIMEText
 from email import encoders
 import smtplib
 
-# Configuration
+# ======================= CONFIGURATION =======================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Init APIs
+# OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# Telegram
 telegram_bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Google
+# Google credentials
 b64 = os.getenv('SERVICE_ACCOUNT_JSON_B64')
-service_account_info = json.loads(base64.b64decode(b64))
+service_account_info = json.loads(base64.b64decode(b64 or ''))
 creds = service_account.Credentials.from_service_account_info(
     service_account_info,
     scopes=['https://www.googleapis.com/auth/spreadsheets',
@@ -45,42 +47,21 @@ drive_service = build('drive', 'v3', credentials=creds)
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_ID')
 DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
-# Sources
+# Job sources
 JOB_SOURCES = [
-    {'name': 'AllJobs', 'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'},
-    {'name': 'Drushim', 'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'},
-    {'name': 'Indeed', 'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'},
-    {'name': 'Glassdoor', 'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
-    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'},
+    {'name': 'AllJobs', 'url': 'https://www.alljobs.co.il/...'},
+    {'name': 'Drushim', 'url': 'https://www.drushim.co.il/...'},
+    {'name': 'Indeed', 'url': 'https://il.indeed.com/...'},
+    {'name': 'Glassdoor', 'url': 'https://www.glassdoor.co.il/...'},
+    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/...'}
 ]
-
-def fetch_jobs() -> List[Dict]:
-    jobs = []
-    for src in JOB_SOURCES:
-        logger.info(f"Scraping {src['name']}...")
-        resp = requests.get(src['url'])
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        before = len(jobs)
-        # scraping logic...
-        count = len(jobs) - before
-        logger.info(f"{src['name']}: found {count} jobs")
-    logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
-    return jobs
-
-def filter_relevant(jobs: List[Dict]) -> List[Dict]:
-    try:
-        relevant = []
-        # filtering logic...
-        return relevant
-    except Exception as e:
-        logger.warning(f"OpenAI filter error ({e}), treating all {len(jobs)} jobs as relevant")
-        return jobs
 
 def send_telegram(message: str):
     try:
         asyncio.run(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message))
-    except TelegramError as e:
-        logger.error(f"Telegram error: {e}")
+        logger.info(f"Sent Telegram: {message}")
+    except Exception as e:
+        logger.error(f"Telegram send error: {e}")
 
 def send_email(subject: str, body: str, attachments: List[str] = None):
     try:
@@ -90,11 +71,8 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         port = int(os.getenv('GMAIL_SMTP_PORT') or '587')
-        server = smtplib.SMTP()
-        server.connect(os.getenv('GMAIL_SMTP_SERVER'), port)
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
+        server = smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), port)
+        server.ehlo(); server.starttls(); server.ehlo()
         server.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
         for fp in attachments or []:
             part = MIMEBase('application', 'octet-stream')
@@ -109,34 +87,77 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
 
-def generate_documents(job: Dict) -> Dict[str, str]:
-    # document generation logic...
-    return {'resume': 'resume.txt', 'cover': 'cover.txt'}
+def fetch_jobs() -> List[Dict]:
+    jobs = []
+    for src in JOB_SOURCES:
+        logger.info(f"Scraping {src['name']} at {src['url']}")
+        try:
+            resp = requests.get(src['url'], timeout=10)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            # sample selector logic...
+        except Exception as e:
+            logger.error(f"Error fetching from {src['name']}: {e}")
+    logger.info(f"Total jobs fetched: {len(jobs)}")
+    return jobs
 
-def apply_and_summarize(jobs: List[Dict], relevant: List[Dict]):
+def filter_relevant(jobs: List[Dict]) -> List[Dict]:
+    relevant = []
+    for job in jobs:
+        try:
+            prompt = f"Job: {job['title']}..."
+            resp = openai.chat.completions.create(model="gpt-3.5-turbo",
+                                                  messages=[{"role":"user","content":prompt}])
+            if 'yes' in resp.choices[0].message.content.lower():
+                relevant.append(job)
+        except Exception as e:
+            logger.warning(f"Filter error on {job['title']}: {e}")
+            relevant.append(job)
+    logger.info(f"Relevant jobs: {len(relevant)}")
+    return relevant
+
+def generate_and_upload(job: Dict) -> Dict[str,str]:
+    # ... generate docs ...
+    docs = {'resume': 'resume.txt', 'cover': 'cover.txt'}
+    # upload
+    for name, path in docs.items():
+        try:
+            if os.path.exists(path):
+                drive_service.files().create(
+                    body={'name': path, 'parents':[DRIVE_FOLDER_ID]},
+                    media_body=MediaFileUpload(path),
+                    fields='id'
+                ).execute()
+                logger.info(f"Uploaded {path} to Drive")
+        except Exception as e:
+            logger.error(f"Drive upload error for {path}: {e}")
+    return docs
+
+def apply_and_log(jobs: List[Dict], relevant: List[Dict]):
     for job in relevant:
-        docs = generate_documents(job)
-        send_email(f"Application for {job['title']}", "Please find attached.", [docs['resume'], docs['cover']])
+        docs = generate_and_upload(job)
+        send_email(f"Apply: {job['title']}", "See attachments", [docs['resume'], docs['cover']])
         try:
             now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
             sheets_service.spreadsheets().values().append(
                 spreadsheetId=SPREADSHEET_ID,
-                range='Applications!A:D',
-                valueInputOption='RAW',
-                body={'values': [[job['title'], job['link'], now, 'Applied']]}
+                range="Applications!A:D",
+                valueInputOption="RAW",
+                body={'values': [[job['title'], job.get('link'), now, 'Applied']]}
             ).execute()
-            logger.info(f"Logged application for {job['title']}")
+            logger.info(f"Logged {job['title']} to Sheets")
         except HttpError as e:
-            logger.error(f"Failed to log to Google Sheets: {e}")
-    total = len(jobs)
-    sent = len(relevant)
-    send_telegram(f"🔔 Pipeline finished: found {total} jobs, {sent} relevant and applied.")
+            logger.error(f"Sheets error: {e}")
+    total = len(jobs); sent = len(relevant)
+    try:
+        send_telegram(f"🔔 Pipeline done: {total} jobs fetched, {sent} applied.")
+    except Exception as e:
+        logger.error(f"Summary Telegram error: {e}")
 
 def job_pipeline():
-    send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
+    send_telegram(f"🔔 Starting at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
     relevant = filter_relevant(jobs)
-    apply_and_summarize(jobs, relevant)
+    apply_and_log(jobs, relevant)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     job_pipeline()
