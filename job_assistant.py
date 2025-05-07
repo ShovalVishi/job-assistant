@@ -55,7 +55,7 @@ JOB_SOURCES = [
     {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'}
 ]
 
-# ======================= SCRAPE & LOGGING =======================
+# ======================= SCRAPE & LOG =======================
 def fetch_jobs() -> List[Dict]:
     jobs: List[Dict] = []
     for src in JOB_SOURCES:
@@ -105,7 +105,7 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
             "Salary: around 25000 ILS\n"
             "Is this role relevant? (yes/no)"
         )
-        resp = openai.ChatCompletion.create(
+        resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
@@ -144,7 +144,7 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
 # ======================= DOCUMENT GENERATION =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
-    resp = openai.ChatCompletion.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
