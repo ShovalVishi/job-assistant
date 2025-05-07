@@ -2,7 +2,7 @@ name: Job Assistant
 
 on:
   schedule:
-    # 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
+    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -37,9 +37,10 @@ jobs:
       - name: Export multiline SERVICE_ACCOUNT_JSON
         shell: bash
         run: |
-          echo "SERVICE_ACCOUNT_JSON<<EOF" >> $GITHUB_ENV
-          echo "${{ secrets.SERVICE_ACCOUNT_JSON }}" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          printf 'SERVICE_ACCOUNT_JSON<<EOF
+%s
+EOF
+' "${{ secrets.SERVICE_ACCOUNT_JSON }}" >> $GITHUB_ENV
 
       - name: Run job assistant
         run: python job_assistant.py
