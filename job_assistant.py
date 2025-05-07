@@ -22,7 +22,7 @@ from email import encoders
 import smtplib
 
 # ======================= CONFIGURATION =======================
-# Required environment variables:
+# Environment variables required:
 # OPENAI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 # GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, GMAIL_USERNAME, GMAIL_PASSWORD,
 # SERVICE_ACCOUNT_JSON_B64, GOOGLE_SHEETS_ID, EMAIL_FROM
@@ -30,18 +30,17 @@ import smtplib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI and Telegram
+# Initialize API clients
 openai.api_key = os.getenv('OPENAI_API_KEY')
 telegram_bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Decode and load Google service account credentials from Base64
+# Decode service account from Base64
 b64 = os.getenv('SERVICE_ACCOUNT_JSON_B64')
 service_account_info = json.loads(base64.b64decode(b64))
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 creds = service_account.Credentials.from_service_account_info(
     service_account_info,
-    scopes=SCOPES
+    scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 )
 sheets_service = build('sheets', 'v4', credentials=creds)
 drive_service = build('drive', 'v3', credentials=creds)
@@ -52,8 +51,23 @@ JOB_SOURCES = [
     {
         'name': 'AllJobs',
         'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'
+    },
+    {
+        'name': 'Drushim',
+        'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'
+    },
+    {
+        'name': 'Indeed',
+        'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'
+    },
+    {
+        'name': 'Glassdoor',
+        'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'
+    },
+    {
+        'name': 'LinkedIn',
+        'url': 'https://il.linkedin.com/jobs/search?keywords=Product%20Manager&location=Tel%20Aviv'
     }
-    # Add more sources as needed
 ]
 
 # ======================= FETCH & FILTER =======================
@@ -62,11 +76,38 @@ def fetch_jobs() -> List[Dict]:
     for src in JOB_SOURCES:
         resp = requests.get(src['url'])
         soup = BeautifulSoup(resp.text, 'html.parser')
-        for tag in soup.select('.job-card'):
-            title = tag.select_one('.job-title').get_text(strip=True)
-            link = tag.select_one('a')['href']
-            jobs.append({'title': title, 'link': link})
-    logger.info(f"Fetched {len(jobs)} jobs")
+        if src['name'] == 'AllJobs':
+            for tag in soup.select('.job-card'):
+                title = tag.select_one('.job-title').get_text(strip=True)
+                link = tag.select_one('a')['href']
+                jobs.append({'source': src['name'], 'title': title, 'link': link})
+        elif src['name'] == 'Drushim':
+            for tag in soup.select('div.job-list__item'):
+                anchor = tag.select_one('a.job-list__link')
+                title = anchor.get_text(strip=True)
+                link = anchor['href']
+                jobs.append({'source': src['name'], 'title': title, 'link': link})
+        elif src['name'] == 'Indeed':
+            for tag in soup.select('a.tapItem'):
+                title_tag = tag.select_one('h2.jobTitle') or tag.select_one('span.jobTitle')
+                title = title_tag.get_text(strip=True) if title_tag else tag.get_text(strip=True)
+                href = tag.get('href', '')
+                link = f'https://il.indeed.com{href}' if href.startswith('/') else href
+                jobs.append({'source': src['name'], 'title': title, 'link': link})
+        elif src['name'] == 'Glassdoor':
+            for tag in soup.select('li.jl'):
+                anchor = tag.select_one('a.jobLink')
+                title = anchor.get_text(strip=True)
+                link = anchor['href']
+                jobs.append({'source': src['name'], 'title': title, 'link': link})
+        elif src['name'] == 'LinkedIn':
+            for tag in soup.select('li.base-card'):
+                anchor = tag.select_one('a.base-card__full-link')
+                if anchor:
+                    title = anchor.get_text(strip=True)
+                    link = anchor['href']
+                    jobs.append({'source': src['name'], 'title': title, 'link': link})
+    logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
     return jobs
 
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
@@ -85,7 +126,7 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
         answer = resp.choices[0].message.content.strip().lower()
         if 'yes' in answer:
             relevant.append(job)
-    logger.info(f"Filtered to {len(relevant)} relevant jobs")
+    logger.info(f"Filtered down to {len(relevant)} relevant jobs")
     return relevant
 
 # ======================= NOTIFICATIONS =======================
@@ -114,7 +155,6 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
         server.send_message(msg)
         logger.info("Email sent successfully")
 
-# ======================= DOCUMENT GENERATION =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
     resp = openai.ChatCompletion.create(
@@ -122,22 +162,19 @@ def generate_documents(job: Dict) -> Dict[str, str]:
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content.strip().split('---')
-    resume_text = content[0].strip()
-    cover_text = content[1].strip() if len(content) > 1 else ''
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     resume_file = f"resume_{timestamp}.txt"
     cover_file = f"cover_{timestamp}.txt"
     with open(resume_file, 'w') as f:
-        f.write(resume_text)
+        f.write(content[0].strip())
     with open(cover_file, 'w') as f:
-        f.write(cover_text)
+        f.write(content[1].strip() if len(content) > 1 else '')
     return {'resume': resume_file, 'cover': cover_file}
 
-# ======================= APPLY & LOG =======================
 def apply_to_job(job: Dict, docs: Dict[str, str]):
     subject = f"Application for {job['title']}"
     body = "Please find attached my resume and cover letter."
-    send_email(subject, body, attachments=[docs['resume'], docs['cover']])
+    send_email(subject, body, [docs['resume'], docs['cover']])
     now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
     sheets_service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
@@ -148,7 +185,6 @@ def apply_to_job(job: Dict, docs: Dict[str, str]):
     logger.info(f"Logged application for {job['title']}")
     send_telegram(f"✅ Completed application for {job['title']}")
 
-# ======================= MAIN WORKFLOW =======================
 def job_pipeline():
     send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
