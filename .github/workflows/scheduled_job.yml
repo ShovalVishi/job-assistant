@@ -2,7 +2,6 @@ name: Job Assistant
 
 on:
   schedule:
-    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -11,36 +10,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.x'
-
-      - name: Install dependencies
-        run: |
+      - run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Export single-line secrets
-        run: |
+      - run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
           echo "GMAIL_USERNAME=${{ secrets.GMAIL_USERNAME }}" >> $GITHUB_ENV
           echo "GMAIL_PASSWORD=${{ secrets.GMAIL_PASSWORD }}" >> $GITHUB_ENV
           echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
+          echo "SERVICE_ACCOUNT_JSON_B64=${{ secrets.SERVICE_ACCOUNT_JSON_B64 }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
-
-      - name: Export multiline SERVICE_ACCOUNT_JSON
-        shell: bash
-        run: |
-          printf 'SERVICE_ACCOUNT_JSON<<EOF
-%s
-EOF
-' "${{ secrets.SERVICE_ACCOUNT_JSON }}" >> $GITHUB_ENV
-
-      - name: Run job assistant
-        run: python job_assistant.py
+      - run: python job_assistant.py
