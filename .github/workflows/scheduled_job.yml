@@ -2,7 +2,7 @@ name: Job Assistant
 
 on:
   schedule:
-    # Runs at 05:00 & 15:00 UTC (08:00 & 18:00 Israel Time)
+    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -27,9 +27,7 @@ jobs:
       - name: Reconstruct service account JSON
         shell: bash
         run: |
-          cat <<'EOF' > credentials.json
-${{ secrets.SERVICE_ACCOUNT_JSON }}
-EOF
+          printf '%s' "${{ secrets.SERVICE_ACCOUNT_JSON }}" > credentials.json
 
       - name: Export secrets to env
         run: |
