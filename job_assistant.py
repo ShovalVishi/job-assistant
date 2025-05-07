@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from datetime import datetime
 from typing import List, Dict
 
@@ -24,8 +25,7 @@ import smtplib
 # Environment variables required:
 # OPENAI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 # GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, GMAIL_USERNAME, GMAIL_PASSWORD,
-# GOOGLE_CREDENTIALS_JSON (path), GOOGLE_SHEETS_ID,
-# EMAIL_FROM
+# SERVICE_ACCOUNT_JSON, GOOGLE_SHEETS_ID, EMAIL_FROM
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +36,10 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 telegram_bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
+# Load service account credentials from JSON stored in env
+service_account_info = json.loads(os.getenv('SERVICE_ACCOUNT_JSON'))
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = service_account.Credentials.from_service_account_file(
-    os.getenv('GOOGLE_CREDENTIALS_JSON'), scopes=SCOPES)
+creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 sheets_service = build('sheets', 'v4', credentials=creds)
 drive_service = build('drive', 'v3', credentials=creds)
 spreadsheet_id = os.getenv('GOOGLE_SHEETS_ID')
@@ -134,10 +135,9 @@ def apply_to_job(job: Dict, docs: Dict[str, str]):
     subject = f"Application for {job['title']}"
     body = f"Dear Hiring Team,\n\nPlease find attached my resume and cover letter for the {job['title']} role.\n\nBest,\nShoval"
     send_email(subject, body, attachments=[docs['resume'], docs['cover']])
-    sheet = sheets_service.spreadsheets()
     now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
     values = [[job['title'], job['link'], now, 'Applied']]
-    sheet.values().append(
+    sheets_service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
         range='Applications!A:D',
         valueInputOption='RAW',
@@ -152,11 +152,9 @@ def job_pipeline():
     for job in relevant:
         msg = f"New match: {job['title']} at {job['link']}. Generate résumé? Reply YES to proceed."
         send_telegram(msg)
-        # input("Press Enter after replying YES...")  # disabled for headless runs
         docs = generate_documents(job)
         review_msg = f"Here are your tailored docs for {job['title']}. Review and reply APPROVE to send."
         send_telegram(review_msg)
-        # input("Press Enter after replying APPROVE...")  # disabled for headless runs
         apply_to_job(job, docs)
     send_telegram("Job pipeline run complete.")
 
