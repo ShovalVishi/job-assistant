@@ -1,0 +1,8 @@
+openai
+requests
+beautifulsoup4
+apscheduler
+pytz
+python-telegram-bot
+google-auth
+google-api-python-client
