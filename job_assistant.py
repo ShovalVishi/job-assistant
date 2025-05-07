@@ -100,7 +100,7 @@ def fetch_jobs() -> List[Dict]:
     logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
     return jobs
 
-# ======================= FILTER RELEVANT =======================
+# ======================= FILTER RELEVANCE =======================
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     try:
         relevant = []
@@ -121,7 +121,7 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
         logger.info(f"Filtered down to {len(relevant)} relevant jobs")
         return relevant
     except Exception as e:
-        logger.warning(f"OpenAI error ({e}), treating all {len(jobs)} jobs as relevant")
+        logger.warning(f"OpenAI filter error ({e}), treating all {len(jobs)} jobs as relevant")
         return jobs
 
 # ======================= NOTIFICATIONS =======================
@@ -154,20 +154,23 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
 # ======================= DOCUMENT GENERATION & DRIVE UPLOAD =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
-    resp = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    parts = resp.choices[0].message.content.strip().split('---')
+    try:
+        resp = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        parts = resp.choices[0].message.content.strip().split('---')
+    except Exception as e:
+        logger.warning(f"OpenAI generation error ({e}), using default templates")
+        parts = ["[Resume content unavailable due to API limits]", "[Cover letter unavailable due to API limits]"]
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
     resume_file = f"resume_{ts}.txt"
     cover_file = f"cover_{ts}.txt"
     with open(resume_file,'w') as f: f.write(parts[0].strip())
-    if len(parts)>1:
+    if parts[1]:
         with open(cover_file,'w') as f: f.write(parts[1].strip())
-    # upload to Drive
     for file_path in [resume_file, cover_file]:
-        if file_path:
+        if os.path.exists(file_path):
             media = MediaFileUpload(file_path)
             drive_service.files().create(
                 body={'name': file_path, 'parents': [DRIVE_FOLDER_ID]},
@@ -190,15 +193,22 @@ def apply_to_job(job: Dict, docs: Dict[str, str]):
     logger.info(f"Logged application for {job['title']}")
     send_telegram(f"✅ Completed application for {job['title']}")
 
-# ======================= MAIN =======================
+# ======================= MAIN WORKFLOW =======================
 def job_pipeline():
     send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
     relevant = filter_relevant(jobs)
+    applied_count = 0
     for job in relevant:
         docs = generate_documents(job)
         apply_to_job(job, docs)
-    send_telegram(f"🔔 Pipeline completed at {datetime.now().isoformat()}")
+        applied_count += 1
+    # Summary message
+    send_telegram(
+        f"🔔 Pipeline completed at {datetime.now().isoformat()}\n"
+        f"Total jobs found: {len(jobs)}\n"
+        f"Applications sent: {applied_count}"
+    )
 
 if __name__ == '__main__':
     job_pipeline()
