@@ -24,11 +24,6 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Reconstruct service account JSON
-        shell: bash
-        run: |
-          printf '%s' "${{ secrets.SERVICE_ACCOUNT_JSON }}" > credentials.json
-
       - name: Export secrets to env
         run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
@@ -37,7 +32,7 @@ jobs:
           echo "GMAIL_USERNAME=${{ secrets.GMAIL_USERNAME }}" >> $GITHUB_ENV
           echo "GMAIL_PASSWORD=${{ secrets.GMAIL_PASSWORD }}" >> $GITHUB_ENV
           echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
-          echo "GOOGLE_CREDENTIALS_JSON=credentials.json" >> $GITHUB_ENV
+          echo "SERVICE_ACCOUNT_JSON=${{ secrets.SERVICE_ACCOUNT_JSON }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
 
       - name: Run job assistant
