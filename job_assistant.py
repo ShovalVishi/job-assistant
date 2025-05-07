@@ -25,7 +25,7 @@ import smtplib
 # ======================= CONFIGURATION =======================
 # Required environment variables:
 # OPENAI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-# GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT (optional), GMAIL_USERNAME, GMAIL_PASSWORD,
+# GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT (optional; defaults to 587), GMAIL_USERNAME, GMAIL_PASSWORD,
 # SERVICE_ACCOUNT_JSON_B64, GOOGLE_SHEETS_ID, DRIVE_FOLDER_ID, EMAIL_FROM
 
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +36,7 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 telegram_bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Decode and load Google service account credentials from Base64
+# Decode service account and initialize Google APIs
 b64 = os.getenv('SERVICE_ACCOUNT_JSON_B64')
 service_account_info = json.loads(base64.b64decode(b64))
 creds = service_account.Credentials.from_service_account_info(
@@ -62,7 +62,7 @@ JOB_SOURCES = [
 
 # ======================= SCRAPE & LOG =======================
 def fetch_jobs() -> List[Dict]:
-    jobs: List[Dict] = []
+    jobs = []
     for src in JOB_SOURCES:
         logger.info(f"Scraping {src['name']}...")
         resp = requests.get(src['url'])
@@ -133,15 +133,18 @@ def send_telegram(message: str):
 
 # ======================= EMAIL =======================
 def send_email(subject: str, body: str, attachments: List[str] = None):
-    msg = MIMEMultipart()
-    msg['From'] = os.getenv('EMAIL_FROM')
-    msg['To'] = os.getenv('GMAIL_USERNAME')
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-    smtp_port = int(os.getenv('GMAIL_SMTP_PORT') or '587')
-    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), smtp_port) as s:
-        s.starttls()
-        s.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = os.getenv('EMAIL_FROM')
+        msg['To'] = os.getenv('GMAIL_USERNAME')
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        smtp_port = int(os.getenv('GMAIL_SMTP_PORT') or '587')
+        server = smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), smtp_port)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
         for fp in attachments or []:
             part = MIMEBase('application', 'octet-stream')
             with open(fp, 'rb') as f:
@@ -149,8 +152,11 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
             encoders.encode_base64(part)
             part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(fp)}"')
             msg.attach(part)
-        s.send_message(msg)
-        logger.info("Email sent")
+        server.send_message(msg)
+        server.quit()
+        logger.info("Email sent successfully")
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
 
 # ======================= DOCUMENT GENERATION & DRIVE UPLOAD =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
@@ -163,10 +169,7 @@ def generate_documents(job: Dict) -> Dict[str, str]:
         parts = resp.choices[0].message.content.strip().split('---')
     except Exception as e:
         logger.warning(f"OpenAI generation error ({e}), using default templates")
-        parts = [
-            "[Resume content unavailable due to API limits]",
-            "[Cover letter unavailable due to API limits]"
-        ]
+        parts = ["[Resume content unavailable due to API limits]","[Cover letter unavailable due to API limits]"]
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
     resume_file = f"resume_{ts}.txt"
     cover_file = f"cover_{ts}.txt"
@@ -201,7 +204,7 @@ def apply_and_summarize(jobs: List[Dict], relevant: List[Dict]):
         logger.info(f"Logged application for {job['title']}")
     total = len(jobs)
     sent = len(relevant)
-    send_telegram(f"🔔 Pipeline finished: found {total} jobs, {sent} relevant and applied.")
+    send_telegram(f"🔔 Pipeline finished: found {total} jobs, {sent} relevant and applied.") 
 
 # ======================= MAIN WORKFLOW =======================
 def job_pipeline():
