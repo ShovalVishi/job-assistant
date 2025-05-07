@@ -22,7 +22,7 @@ from email import encoders
 import smtplib
 
 # ======================= CONFIGURATION =======================
-# Environment variables required:
+# Required environment variables:
 # OPENAI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
 # GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, GMAIL_USERNAME, GMAIL_PASSWORD,
 # SERVICE_ACCOUNT_JSON_B64, GOOGLE_SHEETS_ID, EMAIL_FROM
@@ -30,12 +30,12 @@ import smtplib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize API clients
+# Initialize OpenAI and Telegram
 openai.api_key = os.getenv('OPENAI_API_KEY')
 telegram_bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# Decode service account from Base64
+# Decode and load Google service account credentials from Base64
 b64 = os.getenv('SERVICE_ACCOUNT_JSON_B64')
 service_account_info = json.loads(base64.b64decode(b64))
 creds = service_account.Credentials.from_service_account_info(
@@ -66,16 +66,19 @@ JOB_SOURCES = [
     },
     {
         'name': 'LinkedIn',
-        'url': 'https://il.linkedin.com/jobs/search?keywords=Product%20Manager&location=Tel%20Aviv'
+        # Use LinkedIn guest API for public listings
+        'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'
     }
 ]
 
 # ======================= FETCH & FILTER =======================
 def fetch_jobs() -> List[Dict]:
-    jobs = []
+    jobs: List[Dict] = []
     for src in JOB_SOURCES:
+        logger.info(f"Scraping {src['name']}...")
         resp = requests.get(src['url'])
         soup = BeautifulSoup(resp.text, 'html.parser')
+        before = len(jobs)
         if src['name'] == 'AllJobs':
             for tag in soup.select('.job-card'):
                 title = tag.select_one('.job-title').get_text(strip=True)
@@ -83,35 +86,34 @@ def fetch_jobs() -> List[Dict]:
                 jobs.append({'source': src['name'], 'title': title, 'link': link})
         elif src['name'] == 'Drushim':
             for tag in soup.select('div.job-list__item'):
-                anchor = tag.select_one('a.job-list__link')
-                title = anchor.get_text(strip=True)
-                link = anchor['href']
-                jobs.append({'source': src['name'], 'title': title, 'link': link})
+                a = tag.select_one('a.job-list__link')
+                if a:
+                    jobs.append({'source': src['name'], 'title': a.get_text(strip=True), 'link': a['href']})
         elif src['name'] == 'Indeed':
             for tag in soup.select('a.tapItem'):
                 title_tag = tag.select_one('h2.jobTitle') or tag.select_one('span.jobTitle')
-                title = title_tag.get_text(strip=True) if title_tag else tag.get_text(strip=True)
+                title = title_tag.get_text(strip=True) if title_tag else ''
                 href = tag.get('href', '')
                 link = f'https://il.indeed.com{href}' if href.startswith('/') else href
                 jobs.append({'source': src['name'], 'title': title, 'link': link})
         elif src['name'] == 'Glassdoor':
             for tag in soup.select('li.jl'):
-                anchor = tag.select_one('a.jobLink')
-                title = anchor.get_text(strip=True)
-                link = anchor['href']
-                jobs.append({'source': src['name'], 'title': title, 'link': link})
+                a = tag.select_one('a.jobLink')
+                if a:
+                    jobs.append({'source': src['name'], 'title': a.get_text(strip=True), 'link': a['href']})
         elif src['name'] == 'LinkedIn':
-            for tag in soup.select('li.base-card'):
-                anchor = tag.select_one('a.base-card__full-link')
-                if anchor:
-                    title = anchor.get_text(strip=True)
-                    link = anchor['href']
-                    jobs.append({'source': src['name'], 'title': title, 'link': link})
+            # Parse guest API HTML
+            for tag in soup.select('a.base-card__full-link'):
+                title = tag.get_text(strip=True)
+                link = tag['href']
+                jobs.append({'source': src['name'], 'title': title, 'link': link})
+        count = len(jobs) - before
+        logger.info(f"{src['name']}: found {count} jobs")
     logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
     return jobs
 
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
-    relevant = []
+    relevant: List[Dict] = []
     for job in jobs:
         prompt = (
             f"Job title: {job['title']}\n"
@@ -162,19 +164,15 @@ def generate_documents(job: Dict) -> Dict[str, str]:
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content.strip().split('---')
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    resume_file = f"resume_{timestamp}.txt"
-    cover_file = f"cover_{timestamp}.txt"
-    with open(resume_file, 'w') as f:
+    ts = datetime.now().strftime('%Y%m%d%H%M%S')
+    with open(f"resume_{ts}.txt", 'w') as f:
         f.write(content[0].strip())
-    with open(cover_file, 'w') as f:
+    with open(f"cover_{ts}.txt", 'w') as f:
         f.write(content[1].strip() if len(content) > 1 else '')
-    return {'resume': resume_file, 'cover': cover_file}
+    return {'resume': f"resume_{ts}.txt", 'cover': f"cover_{ts}.txt"}
 
 def apply_to_job(job: Dict, docs: Dict[str, str]):
-    subject = f"Application for {job['title']}"
-    body = "Please find attached my resume and cover letter."
-    send_email(subject, body, [docs['resume'], docs['cover']])
+    send_email(f"Application for {job['title']}", "Please find attached.", [docs['resume'], docs['cover']])
     now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
     sheets_service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
