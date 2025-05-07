@@ -25,7 +25,7 @@ import smtplib
 # ======================= CONFIGURATION =======================
 # Required environment variables:
 # OPENAI_API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID,
-# GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT, GMAIL_USERNAME, GMAIL_PASSWORD,
+# GMAIL_SMTP_SERVER, GMAIL_SMTP_PORT (optional), GMAIL_USERNAME, GMAIL_PASSWORD,
 # SERVICE_ACCOUNT_JSON_B64, GOOGLE_SHEETS_ID, DRIVE_FOLDER_ID, EMAIL_FROM
 
 logging.basicConfig(level=logging.INFO)
@@ -100,7 +100,7 @@ def fetch_jobs() -> List[Dict]:
     logger.info(f"Fetched total {len(jobs)} jobs from {len(JOB_SOURCES)} sources")
     return jobs
 
-# ======================= FILTER RELEVANCE =======================
+# ======================= FILTER RELEVANT =======================
 def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     try:
         relevant = []
@@ -138,16 +138,17 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
     msg['To'] = os.getenv('GMAIL_USERNAME')
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
-    for fp in attachments or []:
-        part = MIMEBase('application','octet-stream')
-        with open(fp,'rb') as f:
-            part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(fp)}"')
-        msg.attach(part)
-    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), int(os.getenv('GMAIL_SMTP_PORT'))) as s:
+    smtp_port = int(os.getenv('GMAIL_SMTP_PORT') or '587')
+    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), smtp_port) as s:
         s.starttls()
         s.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
+        for fp in attachments or []:
+            part = MIMEBase('application', 'octet-stream')
+            with open(fp, 'rb') as f:
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(fp)}"')
+            msg.attach(part)
         s.send_message(msg)
         logger.info("Email sent")
 
@@ -162,13 +163,18 @@ def generate_documents(job: Dict) -> Dict[str, str]:
         parts = resp.choices[0].message.content.strip().split('---')
     except Exception as e:
         logger.warning(f"OpenAI generation error ({e}), using default templates")
-        parts = ["[Resume content unavailable due to API limits]", "[Cover letter unavailable due to API limits]"]
+        parts = [
+            "[Resume content unavailable due to API limits]",
+            "[Cover letter unavailable due to API limits]"
+        ]
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
     resume_file = f"resume_{ts}.txt"
     cover_file = f"cover_{ts}.txt"
-    with open(resume_file,'w') as f: f.write(parts[0].strip())
+    with open(resume_file, 'w') as f:
+        f.write(parts[0].strip())
     if parts[1]:
-        with open(cover_file,'w') as f: f.write(parts[1].strip())
+        with open(cover_file, 'w') as f:
+            f.write(parts[1].strip())
     for file_path in [resume_file, cover_file]:
         if os.path.exists(file_path):
             media = MediaFileUpload(file_path)
@@ -180,35 +186,29 @@ def generate_documents(job: Dict) -> Dict[str, str]:
             logger.info(f"Uploaded {file_path} to Drive")
     return {'resume': resume_file, 'cover': cover_file}
 
-# ======================= APPLY & LOG =======================
-def apply_to_job(job: Dict, docs: Dict[str, str]):
-    send_email(f"Application for {job['title']}", "Please find attached.", [docs['resume'], docs['cover']])
-    now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
-    sheets_service.spreadsheets().values().append(
-        spreadsheetId=SPREADSHEET_ID,
-        range='Applications!A:D',
-        valueInputOption='RAW',
-        body={'values': [[job['title'], job['link'], now, 'Applied']]}
-    ).execute()
-    logger.info(f"Logged application for {job['title']}")
-    send_telegram(f"✅ Completed application for {job['title']}")
+# ======================= APPLY & SUMMARY =======================
+def apply_and_summarize(jobs: List[Dict], relevant: List[Dict]):
+    for job in relevant:
+        docs = generate_documents(job)
+        send_email(f"Application for {job['title']}", "Please find attached.", [docs['resume'], docs['cover']])
+        now = datetime.now().astimezone(timezone('Asia/Jerusalem')).isoformat()
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range='Applications!A:D',
+            valueInputOption='RAW',
+            body={'values': [[job['title'], job['link'], now, 'Applied']]}
+        ).execute()
+        logger.info(f"Logged application for {job['title']}")
+    total = len(jobs)
+    sent = len(relevant)
+    send_telegram(f"🔔 Pipeline finished: found {total} jobs, {sent} relevant and applied.")
 
 # ======================= MAIN WORKFLOW =======================
 def job_pipeline():
     send_telegram(f"🔔 Pipeline started at {datetime.now().isoformat()}")
     jobs = fetch_jobs()
     relevant = filter_relevant(jobs)
-    applied_count = 0
-    for job in relevant:
-        docs = generate_documents(job)
-        apply_to_job(job, docs)
-        applied_count += 1
-    # Summary message
-    send_telegram(
-        f"🔔 Pipeline completed at {datetime.now().isoformat()}\n"
-        f"Total jobs found: {len(jobs)}\n"
-        f"Applications sent: {applied_count}"
-    )
+    apply_and_summarize(jobs, relevant)
 
 if __name__ == '__main__':
     job_pipeline()
