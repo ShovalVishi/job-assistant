@@ -2,6 +2,7 @@ name: Job Assistant
 
 on:
   schedule:
+    # Runs at 05:00 & 15:00 UTC = 08:00 & 18:00 Israel Time
     - cron: '0 5,15 * * *'
   workflow_dispatch:
 
@@ -10,14 +11,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
-      - run: |
+
+      - name: Install dependencies
+        run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-      - run: |
+
+      - name: Export secrets to env
+        run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
           echo "TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}" >> $GITHUB_ENV
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
@@ -26,4 +34,16 @@ jobs:
           echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
           echo "SERVICE_ACCOUNT_JSON_B64=${{ secrets.SERVICE_ACCOUNT_JSON_B64 }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
-      - run: python job_assistant.py
+
+      - name: Debug env
+        run: |
+          echo "Checking required variables…"
+          echo "OPENAI_API_KEY is '${OPENAI_API_KEY:?missing}'"
+          echo "TELEGRAM_TOKEN is '${TELEGRAM_TOKEN:?missing}'"
+          echo "TELEGRAM_CHAT_ID is '${TELEGRAM_CHAT_ID:?missing}'"
+          echo "SERVICE_ACCOUNT_JSON_B64 length is ${#SERVICE_ACCOUNT_JSON_B64}"
+          echo "GOOGLE_SHEETS_ID is '${GOOGLE_SHEETS_ID:?missing}'"
+          echo "EMAIL_FROM is '${EMAIL_FROM:?missing}'"
+
+      - name: Run job assistant
+        run: python job_assistant.py
