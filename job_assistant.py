@@ -48,26 +48,11 @@ spreadsheet_id = os.getenv('GOOGLE_SHEETS_ID')
 
 # ======================= JOB SOURCES =======================
 JOB_SOURCES = [
-    {
-        'name': 'AllJobs',
-        'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'
-    },
-    {
-        'name': 'Drushim',
-        'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'
-    },
-    {
-        'name': 'Indeed',
-        'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'
-    },
-    {
-        'name': 'Glassdoor',
-        'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'
-    },
-    {
-        'name': 'LinkedIn',
-        'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'
-    }
+    {'name': 'AllJobs', 'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product+Manager&region=Center'},
+    {'name': 'Drushim', 'url': 'https://www.drushim.co.il/jobs/?q=Product+Manager&loc=Center'},
+    {'name': 'Indeed', 'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Center'},
+    {'name': 'Glassdoor', 'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
+    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Product%20Manager&location=Tel%20Aviv'}
 ]
 
 # ======================= SCRAPE & LOGGING =======================
@@ -120,8 +105,8 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
             "Salary: around 25000 ILS\n"
             "Is this role relevant? (yes/no)"
         )
-        resp = openai.chat.completions.create(
-            model="gpt-4",
+        resp = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}]
         )
         answer = resp.choices[0].message.content.strip().lower()
@@ -150,17 +135,17 @@ def send_email(subject: str, body: str, attachments: List[str] = None):
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
         msg.attach(part)
-    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), int(os.getenv('GMAIL_SMTP_PORT'))) as s:
-        s.starttls()
-        s.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
-        s.send_message(msg)
+    with smtplib.SMTP(os.getenv('GMAIL_SMTP_SERVER'), int(os.getenv('GMAIL_SMTP_PORT'))) as server:
+        server.starttls()
+        server.login(os.getenv('GMAIL_USERNAME'), os.getenv('GMAIL_PASSWORD'))
+        server.send_message(msg)
         logger.info("Email sent successfully")
 
 # ======================= DOCUMENT GENERATION =======================
 def generate_documents(job: Dict) -> Dict[str, str]:
     prompt = f"Tailor a professional resume and cover letter for Shoval applying to '{job['title']}' at {job['link']}."
-    resp = openai.chat.completions.create(
-        model="gpt-4",
+    resp = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
     content = resp.choices[0].message.content.strip().split('---')
