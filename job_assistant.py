@@ -52,8 +52,10 @@ if service_account_info:
     try:
         creds = service_account.Credentials.from_service_account_info(
             service_account_info,
-            scopes=['https://www.googleapis.com/auth/spreadsheets',
-                    'https://www.googleapis.com/auth/drive']
+            scopes=[
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/drive'
+            ]
         )
     except Exception as e:
         logger.error(f"Failed to create credentials: {e}")
@@ -71,11 +73,26 @@ if not DRIVE_FOLDER_ID:
 
 # ------------------ JOB SOURCES ------------------
 JOB_SOURCES = [
-    {'name': 'AllJobs',  'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product%20Manager&region=Center'},
-    {'name': 'Drushim',  'url': 'https://www.drushim.co.il/jobs/?q=Product%20Manager&loc=Center'},
-    {'name': 'Indeed',   'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Central+Israel'},
-    {'name': 'Glassdoor','url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
-    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs/search?keywords=Product%20Manager&location=Central%20Israel'}
+    {
+        'name': 'AllJobs',
+        'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product%20Manager&region=Center'
+    },
+    {
+        'name': 'Drushim',
+        'url': 'https://www.drushim.co.il/jobs/?q=Product%20Manager&loc=Center'
+    },
+    {
+        'name': 'Indeed',
+        'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Central+Israel'
+    },
+    {
+        'name': 'Glassdoor',
+        'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'
+    },
+    {
+        'name': 'LinkedIn',
+        'url': 'https://www.linkedin.com/jobs/search?keywords=Product%20Manager&location=Central%20Israel'
+    }
 ]
 
 async def send_telegram(message: str):
@@ -99,16 +116,15 @@ def fetch_jobs() -> List[Dict]:
             r.raise_for_status()
             soup = BeautifulSoup(r.text, 'html.parser')
             before = len(jobs)
-            # Example selector logic per site...
             if src['name'] == 'AllJobs':
                 for card in soup.select('.search-result-item'):
-                    title = card.select_one('h3.job-title')
+                    title_tag = card.select_one('h3.job-title')
                     link_tag = card.select_one('a.job-item-vacancy-title') or card.select_one('a')
-                    if title and link_tag and link_tag.has_attr('href'):
+                    if title_tag and link_tag and link_tag.has_attr('href'):
                         href = link_tag['href']
                         if not href.startswith('http'):
                             href = f"https://www.alljobs.co.il{href}"
-                        jobs.append({'source': 'AllJobs', 'title': title.text.strip(), 'link': href})
+                        jobs.append({'source': 'AllJobs', 'title': title_tag.text.strip(), 'link': href})
             elif src['name'] == 'Drushim':
                 for item in soup.select('.job-list__item'):
                     a = item.select_one('a.job-list__link')
@@ -127,12 +143,12 @@ def fetch_jobs() -> List[Dict]:
             elif src['name'] == 'Glassdoor':
                 for tag in soup.select('li.react-job-listing'):
                     link_tag = tag.select_one('a.job-link') or tag.select_one('a.jobLink')
-                    title_tag = tag.select_one('a > span') or tag.select_one('.jobLink')
-                    if link_tag and link_tag.has_attr('href') and title_tag:
+                    title_span = tag.select_one('a > span') or tag.select_one('.jobLink')
+                    if link_tag and link_tag.has_attr('href') and title_span:
                         href = link_tag['href']
                         if not href.startswith('http'):
                             href = f"https://www.glassdoor.co.il{href}"
-                        jobs.append({'source': 'Glassdoor', 'title': title_tag.text.strip(), 'link': href})
+                        jobs.append({'source': 'Glassdoor', 'title': title_span.text.strip(), 'link': href})
             elif src['name'] == 'LinkedIn':
                 for card in soup.select('ul.jobs-search__results-list li'):
                     a = card.select_one('a.base-card__full-link') or card.select_one('a.job-card-list__title')
@@ -154,24 +170,21 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     for job in jobs:
         try:
             prompt = (
-                f"Job title: {job['title']}
-"
-                f"Job link: {job['link']}
-"
-                "Location: within 1-hour drive of Netanya, Israel
-"
-                "Salary: around 25,000 ILS
-"
+                f"Job title: {job['title']}\n"
+                f"Job link: {job['link']}\n"
+                "Location: within 1-hour drive of Netanya, Israel\n"
+                "Salary: around 25,000 ILS\n"
                 "Respond with 'yes' or 'no' only: Is this relevant?"
             )
             resp = openai.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}]
             )
-            if 'yes' in resp.choices[0].message.content.lower():
+            content = resp.choices[0].message.content.strip().lower()
+            if 'yes' in content:
                 relevant.append(job)
         except Exception as e:
-            logger.warning(f"Filter error for '{job['title']}': {e}, including by default")
+            logger.warning(f"Filter error for '{job['title']}': {e}. Including by default.")
             relevant.append(job)
     logger.info(f"Relevant jobs: {len(relevant)} / {len(jobs)}")
     return relevant
@@ -207,7 +220,7 @@ def generate_documents(job: Dict) -> Dict[str, str]:
         f.write(resume_text)
     with open(cover_name, 'w', encoding='utf-8') as f:
         f.write(cover_text)
-    logger.info(f"Generated files: {resume_name}, {cover_name}")
+    logger.info(f"Generated: {resume_name}, {cover_name}")
     if drive_service and DRIVE_FOLDER_ID:
         for fname in [resume_name, cover_name]:
             try:
@@ -253,11 +266,13 @@ async def apply_and_log(jobs: List[Dict], relevant: List[Dict]):
             logger.error(f"Sheets append failed: {e.resp.status} - {e.content}")
         except Exception as e:
             logger.error(f"Unexpected Sheets error: {e}")
-    await send_telegram(f"🔔 Pipeline finished: fetched {len(jobs)}, processed {len(relevant)} relevant jobs.")
+    await send_telegram(
+        f"🔔 Pipeline finished: fetched {len(jobs)}, processed {len(relevant)} relevant jobs."
+    )
 
 async def job_pipeline():
-    start = datetime.now().isoformat()
-    await send_telegram(f"🔔 Pipeline started at {start}")
+    start_ts = datetime.now().isoformat()
+    await send_telegram(f"🔔 Pipeline started at {start_ts}")
     jobs = fetch_jobs()
     if not jobs:
         await send_telegram("🔔 No jobs fetched; ending pipeline.")
@@ -267,8 +282,8 @@ async def job_pipeline():
         await send_telegram(f"🔔 Fetched {len(jobs)} jobs, none relevant; ending pipeline.")
         return
     await apply_and_log(jobs, relevant)
-    end = datetime.now().isoformat()
-    logger.info(f"Pipeline completed; duration: {end} - {start}")
+    duration = datetime.now().isoformat()
+    logger.info(f"Pipeline completed at {duration}")
 
 if __name__ == '__main__':
     asyncio.run(job_pipeline())
