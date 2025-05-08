@@ -1,0 +1,23 @@
+name: Email Monitor
+
+on:
+  schedule:
+    - cron: '0 * * * *'     # every hour
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - run: pip install -r requirements.txt
+      - run: python email_monitor.py
+        env:
+          OPENAI_API_KEY:            ${{ secrets.OPENAI_API_KEY }}
+          SERVICE_ACCOUNT_JSON_B64:  ${{ secrets.SERVICE_ACCOUNT_JSON_B64 }}
+          GMAIL_DELEGATE_EMAIL:      ${{ secrets.GMAIL_DELEGATE_EMAIL }}
+          GOOGLE_SHEETS_ID:          ${{ secrets.GOOGLE_SHEETS_ID }}
+          GOOGLE_SHEET_APP_TAB:      ${{ secrets.GOOGLE_SHEET_APP_TAB }}
