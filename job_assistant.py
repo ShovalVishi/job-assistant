@@ -49,11 +49,11 @@ DRIVE_FOLDER_ID = os.getenv('DRIVE_FOLDER_ID')
 
 # Job sources
 JOB_SOURCES = [
-    {'name': 'AllJobs',  'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product%20Manager&region=Center'},
-    {'name': 'Drushim',  'url': 'https://www.drushim.co.il/jobs/?q=Product%20Manager&loc=Center'},
-    {'name': 'Indeed',   'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Central+Israel'},
-    {'name': 'Glassdoor','url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
-    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs/search?keywords=Product%20Manager&location=Central%20Israel'}
+    {'name': 'LinkedIn', 'url': 'https://www.linkedin.com/jobs/search?keywords=Product%20Manager&location=Central%20Israel'},
+    {'name': 'AllJobs',   'url': 'https://www.alljobs.co.il/SearchResultsGuest.aspx?keyword=Product%20Manager&region=Center'},
+    {'name': 'Drushim',   'url': 'https://www.drushim.co.il/jobs/?q=Product%20Manager&loc=Center'},
+    {'name': 'Indeed',    'url': 'https://il.indeed.com/jobs?q=Product+Manager&l=Central+Israel'},
+    {'name': 'Glassdoor', 'url': 'https://www.glassdoor.co.il/Job/central-israel-Product-Manager-jobs-SRCH_IL.0,13_IS360_KO14,31.htm'},
 ]
 
 def send_telegram(message: str):
@@ -72,7 +72,13 @@ def fetch_jobs() -> List[Dict]:
             r.raise_for_status()
             soup = BeautifulSoup(r.text, 'html.parser')
             before = len(jobs)
-            if src['name'] == 'AllJobs':
+            if src['name'] == 'LinkedIn':
+                for card in soup.select('ul.jobs-search__results-list li'):
+                    a = card.select_one('a.base-card__full-link')
+                    title = card.select_one('h3.base-search-card__title')
+                    if a and title:
+                        jobs.append({'source': 'LinkedIn', 'title': title.text.strip(), 'link': a['href']})
+            elif src['name'] == 'AllJobs':
                 for card in soup.select('.search-result-item'):
                     t = card.select_one('h3.job-title')
                     link = card.select_one('a')
@@ -95,12 +101,6 @@ def fetch_jobs() -> List[Dict]:
                     a = tag.select_one('a.jobLink')
                     if a:
                         jobs.append({'source': 'Glassdoor', 'title': a.text.strip(), 'link': a['href']})
-            elif src['name'] == 'LinkedIn':
-                for card in soup.select('ul.jobs-search__results-list li'):
-                    a = card.select_one('a.base-card__full-link')
-                    title = card.select_one('h3.base-search-card__title')
-                    if a and title:
-                        jobs.append({'source': 'LinkedIn', 'title': title.text.strip(), 'link': a['href']})
             count = len(jobs) - before
             logger.info(f"{src['name']}: found {count} jobs")
         except Exception as e:
@@ -112,8 +112,10 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
     relevant = []
     for job in jobs:
         try:
-            prompt = (f"Job title: {job['title']}\nLocation: within 1h drive of Netanya\n"
-                      "Salary ~25000 ILS\nIs this relevant? yes/no")
+            prompt = (f"Job title: {job['title']}\n"
+                      "Location: within 1h drive of Netanya\n"
+                      "Salary ~25000 ILS\n"
+                      "Relevant? yes/no")
             resp = openai.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role":"user","content":prompt}]
@@ -121,14 +123,14 @@ def filter_relevant(jobs: List[Dict]) -> List[Dict]:
             if 'yes' in resp.choices[0].message.content.lower():
                 relevant.append(job)
         except Exception as e:
-            logger.warning(f"Filter error {job['title']}: {e}, default include")
+            logger.warning(f"Filter error {job['title']}: {e}, include by default")
             relevant.append(job)
     logger.info(f"Relevant jobs: {len(relevant)}")
     return relevant
 
 def generate_documents(job: Dict) -> Dict[str,str]:
     try:
-        prompt = f"Create resume and cover letter for '{job['title']}', apply link: {job['link']}."
+        prompt = f"Create resume and cover letter for '{job['title']}', link: {job['link']}."
         resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role":"user","content":prompt}]
@@ -138,7 +140,8 @@ def generate_documents(job: Dict) -> Dict[str,str]:
         logger.warning(f"Doc gen error: {e}")
         parts = ["[Resume]", "[Cover letter]"]
     ts = datetime.now().strftime('%Y%m%d%H%M%S')
-    res = f"resume_{ts}.txt"; cov = f"cover_{ts}.txt"
+    res = f"resume_{ts}.txt"
+    cov = f"cover_{ts}.txt"
     with open(res,'w') as f: f.write(parts[0].strip())
     with open(cov,'w') as f: f.write(parts[1].strip() if len(parts)>1 else '')
     for fp in [res,cov]:
@@ -148,10 +151,10 @@ def generate_documents(job: Dict) -> Dict[str,str]:
                 media_body=MediaFileUpload(fp),
                 fields='id'
             ).execute()
-            logger.info(f"Uploaded {fp}")
+            logger.info(f"Uploaded {fp} to Drive")
         except Exception as e:
-            logger.error(f"Drive upload {fp} failed: {e}")
-    return {'resume':res,'cover':cov}
+            logger.error(f"Drive upload failed for {fp}: {e}")
+    return {'resume': res, 'cover': cov}
 
 def apply_and_log(jobs: List[Dict], relevant: List[Dict]):
     rows = []
@@ -166,7 +169,7 @@ def apply_and_log(jobs: List[Dict], relevant: List[Dict]):
             valueInputOption='RAW',
             body={'values': rows}
         ).execute()
-        logger.info(f"Appended {len(rows)} to Sheets")
+        logger.info(f"Logged {len(rows)} to Sheets")
     except Exception as e:
         logger.error(f"Sheets append failed: {e}")
     send_telegram(f"🔔 Pipeline finished: fetched {len(jobs)}, applied {len(relevant)}")
